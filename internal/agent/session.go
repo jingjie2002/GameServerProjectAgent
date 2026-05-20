@@ -100,6 +100,7 @@ func (s *Session) help() string {
 		"/gm preview-mail|send-mail|ban-player|unban-player|freeze-cdk ...",
 		"/审计 [limit]",
 		"gsa setup（重新运行初始化向导）",
+		"gsa import <repo-url> [--dest path]（导入仓库）",
 		"/退出",
 	}, "\n")
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jingjie2002/GameServerProjectAgent/internal/agent"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/audit"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/importer"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/permissions"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/setup"
@@ -64,6 +65,16 @@ func main() {
 	if cfg.Workspace != "" {
 		workspace = cfg.Workspace
 	}
+	if len(args) > 0 && args[0] == "import" {
+		output, err := runImportCommand(context.Background(), home, workspace, configPath, args[1:])
+		if err != nil {
+			exitErr(err)
+		}
+		if output != "" {
+			fmt.Println(output)
+		}
+		return
+	}
 	manifests, err := projects.LoadManifests(projectManifestPaths(workspace, cfg))
 	if err != nil {
 		exitErr(err)
@@ -102,6 +113,8 @@ func runInteractive(session *agent.Session) {
 
 func runOneShot(ctx context.Context, session *agent.Session, args []string) string {
 	switch args[0] {
+	case "import":
+		return "usage: gsa import <repo-url> [--dest path]"
 	case "projects":
 		return session.Handle(ctx, "/项目")
 	case "capabilities":
@@ -127,6 +140,57 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 	default:
 		return session.Handle(ctx, strings.Join(args, " "))
 	}
+}
+
+func runImportCommand(ctx context.Context, home string, workspace string, configPath string, args []string) (string, error) {
+	repoURL, dest, err := parseImportArgs(args)
+	if err != nil {
+		return "", err
+	}
+	result, err := importer.Import(ctx, importer.Options{
+		RepoURL:    repoURL,
+		Workspace:  workspace,
+		Dest:       dest,
+		Home:       home,
+		ConfigPath: configPath,
+	})
+	if err != nil {
+		return "", err
+	}
+	return importer.FormatResult(result), nil
+}
+
+func parseImportArgs(args []string) (string, string, error) {
+	var repoURL string
+	var dest string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--dest":
+			if i+1 >= len(args) {
+				return "", "", fmt.Errorf("usage: gsa import <repo-url> [--dest path]")
+			}
+			dest = args[i+1]
+			i++
+		default:
+			if strings.HasPrefix(arg, "--dest=") {
+				dest = strings.TrimPrefix(arg, "--dest=")
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				return "", "", fmt.Errorf("unknown import option: %s", arg)
+			}
+			if repoURL == "" {
+				repoURL = arg
+				continue
+			}
+			return "", "", fmt.Errorf("usage: gsa import <repo-url> [--dest path]")
+		}
+	}
+	if repoURL == "" {
+		return "", "", fmt.Errorf("usage: gsa import <repo-url> [--dest path]")
+	}
+	return repoURL, dest, nil
 }
 
 func projectManifestPaths(workspace string, cfg setup.Config) []string {

@@ -43,6 +43,16 @@ forbidden:
 	}
 }
 
+func TestParseManifestWithUTF8BOM(t *testing.T) {
+	manifest, err := ParseManifest([]byte("\ufeffid: demo\nname: Demo\nroot: .\n"))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if manifest.ID != "demo" {
+		t.Fatalf("unexpected id: %q", manifest.ID)
+	}
+}
+
 func TestFindWorkspaceWalksUp(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"CoreRank", "ArenaGate", "GameOps"} {

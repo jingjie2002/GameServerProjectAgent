@@ -74,7 +74,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	var section string
 	var commandName string
 	for scanner.Scan() {
-		raw := stripComment(scanner.Text())
+		raw := strings.TrimPrefix(stripComment(scanner.Text()), "\ufeff")
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
