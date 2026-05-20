@@ -11,7 +11,7 @@ import (
 	"unicode"
 
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
-	"github.com/jingjie2002/GameServerProjectAgent/internal/setup"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/registry"
 )
 
 type Runner interface {
@@ -106,12 +106,16 @@ func Import(ctx context.Context, opts Options) (Result, error) {
 			return result, nil
 		}
 		result.ManifestPath = manifestPath
-		registered, err := registerManifest(opts, manifestPath)
+		registered, err := registry.RegisterManifest(registry.Options{
+			Home:       opts.Home,
+			Workspace:  opts.Workspace,
+			ConfigPath: opts.ConfigPath,
+		}, manifestPath)
 		if err != nil {
 			return result, err
 		}
-		result.Registered = registered
-		if registered {
+		result.Registered = registered.Registered
+		if registered.Registered {
 			result.Message = "发现合法 agent.yaml，已注册到 gsa 配置。"
 		} else {
 			result.Message = "发现合法 agent.yaml，配置中已存在，未重复注册。"
@@ -150,44 +154,6 @@ func FormatResult(result Result) string {
 		lines = append(lines, result.Message)
 	}
 	return strings.Join(lines, "\n")
-}
-
-func registerManifest(opts Options, manifestPath string) (bool, error) {
-	cfg, err := setup.LoadConfig(opts.ConfigPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false, err
-		}
-		cfg = setup.Config{
-			Version:   1,
-			Home:      opts.Home,
-			Workspace: opts.Workspace,
-			LLM: setup.LLMConfig{
-				Provider:  "none",
-				APIKeyEnv: "GSA_LLM_API_KEY",
-			},
-		}
-	}
-	clean := filepath.Clean(manifestPath)
-	for _, existing := range cfg.ProjectManifestPaths() {
-		if samePath(existing, clean) {
-			return false, nil
-		}
-	}
-	cfg.Projects = append(cfg.Projects, setup.ProjectConfig{ManifestPath: clean})
-	if cfg.Home == "" {
-		cfg.Home = opts.Home
-	}
-	if cfg.Workspace == "" {
-		cfg.Workspace = opts.Workspace
-	}
-	if cfg.Version == 0 {
-		cfg.Version = 1
-	}
-	if cfg.LLM.APIKeyEnv == "" {
-		cfg.LLM.APIKeyEnv = "GSA_LLM_API_KEY"
-	}
-	return true, setup.WriteConfig(opts.ConfigPath, cfg)
 }
 
 func writeReport(opts Options, result Result, parseError string) (string, error) {
@@ -257,15 +223,6 @@ func sanitizeName(value string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-.")
-}
-
-func samePath(a string, b string) bool {
-	aa, errA := filepath.Abs(filepath.Clean(a))
-	bb, errB := filepath.Abs(filepath.Clean(b))
-	if errA == nil && errB == nil {
-		return strings.EqualFold(aa, bb)
-	}
-	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
 func fileExists(path string) bool {

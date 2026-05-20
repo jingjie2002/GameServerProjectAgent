@@ -11,6 +11,7 @@ import (
 
 	"github.com/jingjie2002/GameServerProjectAgent/internal/agent"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/audit"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/generated"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/importer"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/permissions"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
@@ -90,6 +91,16 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "register-generated" {
+		output, err := runRegisterGeneratedCommand(args[1:], home, workspace, configPath)
+		if err != nil {
+			exitErr(err)
+		}
+		if output != "" {
+			fmt.Println(output)
+		}
+		return
+	}
 	manifests, err := projects.LoadManifests(projectManifestPaths(workspace, cfg))
 	if err != nil {
 		exitErr(err)
@@ -132,6 +143,8 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 		return "usage: gsa import <repo-url> [--dest path]"
 	case "scan":
 		return "usage: gsa scan <path>"
+	case "register-generated":
+		return "usage: gsa register-generated <path> [--confirm]"
 	case "projects":
 		return session.Handle(ctx, "/项目")
 	case "capabilities":
@@ -168,6 +181,24 @@ func runScanCommand(args []string, home string) (string, error) {
 		return "", err
 	}
 	return scanner.FormatResult(result), nil
+}
+
+func runRegisterGeneratedCommand(args []string, home string, workspace string, configPath string) (string, error) {
+	path, confirm, err := parseRegisterGeneratedArgs(args)
+	if err != nil {
+		return "", err
+	}
+	result, err := generated.Register(generated.Options{
+		Path:       path,
+		Home:       home,
+		Workspace:  workspace,
+		ConfigPath: configPath,
+		Confirm:    confirm,
+	})
+	if err != nil {
+		return "", err
+	}
+	return generated.FormatResult(result), nil
 }
 
 func runImportCommand(ctx context.Context, home string, workspace string, configPath string, args []string) (string, error) {
@@ -219,6 +250,29 @@ func parseImportArgs(args []string) (string, string, error) {
 		return "", "", fmt.Errorf("usage: gsa import <repo-url> [--dest path]")
 	}
 	return repoURL, dest, nil
+}
+
+func parseRegisterGeneratedArgs(args []string) (string, bool, error) {
+	var path string
+	var confirm bool
+	for _, arg := range args {
+		switch arg {
+		case "--confirm":
+			confirm = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", false, fmt.Errorf("unknown register-generated option: %s", arg)
+			}
+			if path != "" {
+				return "", false, fmt.Errorf("usage: gsa register-generated <path> [--confirm]")
+			}
+			path = arg
+		}
+	}
+	if path == "" {
+		return "", false, fmt.Errorf("usage: gsa register-generated <path> [--confirm]")
+	}
+	return path, confirm, nil
 }
 
 func projectManifestPaths(workspace string, cfg setup.Config) []string {
