@@ -1,0 +1,5 @@
+.gocache/
+.gsa/
+tmp/
+dist/
+*.exe

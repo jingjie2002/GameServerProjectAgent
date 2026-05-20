@@ -1,0 +1,8 @@
+projects:
+  - ../CoreRank/agent.yaml
+  - ../ArenaGate/agent.yaml
+  - ../GameOps/agent.yaml
+
+notes:
+  - 当前 V1 默认从工作区自动发现上述三个 agent.yaml。
+  - 如需覆盖，可设置 GSA_PROJECT_MANIFESTS，Windows 使用分号分隔。
