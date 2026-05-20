@@ -205,11 +205,11 @@ func RunWizard(opts WizardOptions) (Config, error) {
 	fmt.Fprintln(opts.Out)
 
 	workspace := ask(reader, opts.Out, "请选择服务端工作区目录", opts.Workspace)
-	providerChoice := askChoice(reader, opts.Out, "请选择模型供应商", []choice{
+	providerChoice := askChoice(reader, opts.Out, "请选择模型供应商（可暂不配置，后续再接入）", []choice{
+		{Label: "暂不配置模型", Value: "none"},
 		{Label: "DeepSeek", Value: "deepseek"},
 		{Label: "OpenAI", Value: "openai"},
 		{Label: "OpenAI-compatible", Value: "openai-compatible"},
-		{Label: "暂不配置模型", Value: "none"},
 	}, "1")
 
 	llmCfg := defaultLLM(providerChoice)

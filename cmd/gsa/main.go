@@ -13,6 +13,7 @@ import (
 	"github.com/jingjie2002/GameServerProjectAgent/internal/audit"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/generated"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/importer"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/onboard"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/permissions"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/scanner"
@@ -50,6 +51,18 @@ func main() {
 	if len(args) > 0 && args[0] == "help" {
 		fmt.Println(agent.HelpText())
 		return
+	}
+	if len(args) > 0 && args[0] == "onboard" && !setup.ConfigExists(configPath) && !hasArg(args[1:], "--yes", "-y") {
+		fmt.Println("未检测到本机配置，先进入初始化向导。")
+		if _, err := setup.RunWizard(setup.WizardOptions{
+			Home:       home,
+			Workspace:  projects.FindWorkspace(home),
+			ConfigPath: configPath,
+			In:         os.Stdin,
+			Out:        os.Stdout,
+		}); err != nil {
+			exitErr(err)
+		}
 	}
 	if len(args) == 0 && !setup.ConfigExists(configPath) {
 		fmt.Println("未检测到本机配置，先进入初始化向导。")
@@ -101,6 +114,12 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "onboard" {
+		if err := runOnboardCommand(context.Background(), home, workspace, configPath, args[1:]); err != nil {
+			exitErr(err)
+		}
+		return
+	}
 	manifests, err := projects.LoadManifests(projectManifestPaths(workspace, cfg))
 	if err != nil {
 		exitErr(err)
@@ -145,6 +164,8 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 		return "usage: gsa scan <path>"
 	case "register-generated":
 		return "usage: gsa register-generated <path> [--confirm]"
+	case "onboard":
+		return "usage: gsa onboard [repo-url] [--dest path] [--yes]"
 	case "projects":
 		return session.Handle(ctx, "/项目")
 	case "capabilities":
@@ -199,6 +220,24 @@ func runRegisterGeneratedCommand(args []string, home string, workspace string, c
 		return "", err
 	}
 	return generated.FormatResult(result), nil
+}
+
+func runOnboardCommand(ctx context.Context, home string, workspace string, configPath string, args []string) error {
+	repoURL, dest, autoApprove, err := parseOnboardArgs(args)
+	if err != nil {
+		return err
+	}
+	_, err = onboard.Run(ctx, onboard.Options{
+		RepoURL:     repoURL,
+		Dest:        dest,
+		Home:        home,
+		Workspace:   workspace,
+		ConfigPath:  configPath,
+		AutoApprove: autoApprove,
+		In:          os.Stdin,
+		Out:         os.Stdout,
+	})
+	return err
 }
 
 func runImportCommand(ctx context.Context, home string, workspace string, configPath string, args []string) (string, error) {
@@ -275,6 +314,38 @@ func parseRegisterGeneratedArgs(args []string) (string, bool, error) {
 	return path, confirm, nil
 }
 
+func parseOnboardArgs(args []string) (string, string, bool, error) {
+	var repoURL string
+	var dest string
+	var autoApprove bool
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--yes", "-y":
+			autoApprove = true
+		case "--dest":
+			if i+1 >= len(args) {
+				return "", "", false, fmt.Errorf("usage: gsa onboard [repo-url] [--dest path] [--yes]")
+			}
+			dest = args[i+1]
+			i++
+		default:
+			if strings.HasPrefix(arg, "--dest=") {
+				dest = strings.TrimPrefix(arg, "--dest=")
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				return "", "", false, fmt.Errorf("unknown onboard option: %s", arg)
+			}
+			if repoURL != "" {
+				return "", "", false, fmt.Errorf("usage: gsa onboard [repo-url] [--dest path] [--yes]")
+			}
+			repoURL = arg
+		}
+	}
+	return repoURL, dest, autoApprove, nil
+}
+
 func projectManifestPaths(workspace string, cfg setup.Config) []string {
 	if raw := os.Getenv("GSA_PROJECT_MANIFESTS"); raw != "" {
 		parts := strings.Split(raw, string(os.PathListSeparator))
@@ -290,6 +361,17 @@ func projectManifestPaths(workspace string, cfg setup.Config) []string {
 		return paths
 	}
 	return projects.FindDefaultManifestPaths(workspace)
+}
+
+func hasArg(args []string, names ...string) bool {
+	for _, arg := range args {
+		for _, name := range names {
+			if arg == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func auditPath(cwd string) string {

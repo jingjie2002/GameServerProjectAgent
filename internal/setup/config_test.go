@@ -39,7 +39,7 @@ func TestRunWizardWritesConfigAndSecret(t *testing.T) {
 	configPath := filepath.Join(root, ".gsa", "config.yaml")
 	input := strings.Join([]string{
 		"",           // workspace default
-		"1",          // DeepSeek
+		"2",          // DeepSeek
 		"",           // base url default
 		"",           // model default
 		"",           // api key env default
@@ -92,7 +92,7 @@ func TestRunWizardCanSkipModel(t *testing.T) {
 		Home:       root,
 		Workspace:  workspace,
 		ConfigPath: configPath,
-		In:         strings.NewReader("\n4\n"),
+		In:         strings.NewReader("\n1\n"),
 		Out:        &out,
 		Now:        func() time.Time { return time.Date(2026, 5, 20, 23, 0, 0, 0, time.UTC) },
 	})

@@ -43,13 +43,15 @@ type Options struct {
 }
 
 type Result struct {
-	Name         string
-	Dest         string
-	Action       string
-	ManifestPath string
-	Registered   bool
-	ReportPath   string
-	Message      string
+	Name          string
+	Dest          string
+	Action        string
+	ManifestPath  string
+	ManifestValid bool
+	Registered    bool
+	AlreadyExists bool
+	ReportPath    string
+	Message       string
 }
 
 func Import(ctx context.Context, opts Options) (Result, error) {
@@ -106,6 +108,7 @@ func Import(ctx context.Context, opts Options) (Result, error) {
 			return result, nil
 		}
 		result.ManifestPath = manifestPath
+		result.ManifestValid = true
 		registered, err := registry.RegisterManifest(registry.Options{
 			Home:       opts.Home,
 			Workspace:  opts.Workspace,
@@ -115,6 +118,7 @@ func Import(ctx context.Context, opts Options) (Result, error) {
 			return result, err
 		}
 		result.Registered = registered.Registered
+		result.AlreadyExists = registered.AlreadyExists
 		if registered.Registered {
 			result.Message = "发现合法 agent.yaml，已注册到 gsa 配置。"
 		} else {
