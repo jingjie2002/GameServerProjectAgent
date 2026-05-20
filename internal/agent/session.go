@@ -105,6 +105,7 @@ func HelpText() string {
 		"/审计 [limit]",
 		"gsa setup（重新运行初始化向导）",
 		"gsa import <repo-url> [--dest path]（导入仓库）",
+		"gsa scan <path>（扫描仓库并生成配置草稿）",
 		"/退出",
 	}, "\n")
 }

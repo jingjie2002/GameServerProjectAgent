@@ -14,6 +14,7 @@ import (
 	"github.com/jingjie2002/GameServerProjectAgent/internal/importer"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/permissions"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/scanner"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/setup"
 )
 
@@ -79,6 +80,16 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "scan" {
+		output, err := runScanCommand(args[1:], home)
+		if err != nil {
+			exitErr(err)
+		}
+		if output != "" {
+			fmt.Println(output)
+		}
+		return
+	}
 	manifests, err := projects.LoadManifests(projectManifestPaths(workspace, cfg))
 	if err != nil {
 		exitErr(err)
@@ -119,6 +130,8 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 	switch args[0] {
 	case "import":
 		return "usage: gsa import <repo-url> [--dest path]"
+	case "scan":
+		return "usage: gsa scan <path>"
 	case "projects":
 		return session.Handle(ctx, "/项目")
 	case "capabilities":
@@ -144,6 +157,17 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 	default:
 		return session.Handle(ctx, strings.Join(args, " "))
 	}
+}
+
+func runScanCommand(args []string, home string) (string, error) {
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+		return "", fmt.Errorf("usage: gsa scan <path>")
+	}
+	result, err := scanner.Scan(scanner.Options{Path: args[0], Home: home})
+	if err != nil {
+		return "", err
+	}
+	return scanner.FormatResult(result), nil
 }
 
 func runImportCommand(ctx context.Context, home string, workspace string, configPath string, args []string) (string, error) {
