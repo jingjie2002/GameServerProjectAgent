@@ -13,6 +13,7 @@ import (
 	"github.com/jingjie2002/GameServerProjectAgent/internal/audit"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/permissions"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/setup"
 )
 
 func main() {
@@ -27,15 +28,49 @@ func main() {
 	if err != nil {
 		exitErr(err)
 	}
-	workspace := projects.FindWorkspace(cwd)
-	manifests, err := projects.LoadManifests(projectManifestPaths(workspace))
+	executable, _ := os.Executable()
+	home := setup.ResolveHome(cwd, executable)
+	configPath := setup.ConfigPath(home)
+	args := flag.Args()
+	if len(args) > 0 && args[0] == "setup" {
+		if _, err := setup.RunWizard(setup.WizardOptions{
+			Home:       home,
+			Workspace:  projects.FindWorkspace(home),
+			ConfigPath: configPath,
+			In:         os.Stdin,
+			Out:        os.Stdout,
+		}); err != nil {
+			exitErr(err)
+		}
+		return
+	}
+	if len(args) == 0 && !setup.ConfigExists(configPath) {
+		fmt.Println("未检测到本机配置，先进入初始化向导。")
+		if _, err := setup.RunWizard(setup.WizardOptions{
+			Home:       home,
+			Workspace:  projects.FindWorkspace(home),
+			ConfigPath: configPath,
+			In:         os.Stdin,
+			Out:        os.Stdout,
+		}); err != nil {
+			exitErr(err)
+		}
+	}
+	cfg, cfgErr := setup.LoadConfig(configPath)
+	if cfgErr != nil && !os.IsNotExist(cfgErr) {
+		exitErr(cfgErr)
+	}
+	workspace := projects.FindWorkspace(home)
+	if cfg.Workspace != "" {
+		workspace = cfg.Workspace
+	}
+	manifests, err := projects.LoadManifests(projectManifestPaths(workspace, cfg))
 	if err != nil {
 		exitErr(err)
 	}
-	store := audit.NewStore(auditPath(cwd))
+	store := audit.NewStore(auditPath(home))
 	session := agent.NewSession(mode, manifests, store, os.Stdout)
 
-	args := flag.Args()
 	if len(args) == 0 {
 		runInteractive(session)
 		return
@@ -94,7 +129,7 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 	}
 }
 
-func projectManifestPaths(workspace string) []string {
+func projectManifestPaths(workspace string, cfg setup.Config) []string {
 	if raw := os.Getenv("GSA_PROJECT_MANIFESTS"); raw != "" {
 		parts := strings.Split(raw, string(os.PathListSeparator))
 		paths := make([]string, 0, len(parts))
@@ -103,6 +138,9 @@ func projectManifestPaths(workspace string) []string {
 				paths = append(paths, trimmed)
 			}
 		}
+		return paths
+	}
+	if paths := cfg.ProjectManifestPaths(); len(paths) > 0 {
 		return paths
 	}
 	return projects.FindDefaultManifestPaths(workspace)

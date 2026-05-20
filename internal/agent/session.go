@@ -99,6 +99,7 @@ func (s *Session) help() string {
 		"/风险",
 		"/gm preview-mail|send-mail|ban-player|unban-player|freeze-cdk ...",
 		"/审计 [limit]",
+		"gsa setup（重新运行初始化向导）",
 		"/退出",
 	}, "\n")
 }
