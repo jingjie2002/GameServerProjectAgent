@@ -1,5 +1,6 @@
 .gocache/
 .gsa/
 tmp/
+bin/
 dist/
 *.exe
