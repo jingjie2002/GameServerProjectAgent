@@ -88,6 +88,10 @@ func (s *Session) Handle(ctx context.Context, input string) string {
 }
 
 func (s *Session) help() string {
+	return HelpText()
+}
+
+func HelpText() string {
 	return strings.Join([]string{
 		"可用命令：",
 		"/项目",

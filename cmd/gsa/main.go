@@ -45,6 +45,10 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "help" {
+		fmt.Println(agent.HelpText())
+		return
+	}
 	if len(args) == 0 && !setup.ConfigExists(configPath) {
 		fmt.Println("未检测到本机配置，先进入初始化向导。")
 		if _, err := setup.RunWizard(setup.WizardOptions{
