@@ -201,6 +201,9 @@ func (m Manager) Start(project projects.Manifest, confirm bool) (ServiceState, e
 	if err := cmd.Start(); err != nil {
 		return ServiceState{}, err
 	}
+	go func() {
+		_ = cmd.Wait()
+	}()
 	now := m.now().Format(time.RFC3339)
 	state := ServiceState{
 		ProjectID:   project.ID,
