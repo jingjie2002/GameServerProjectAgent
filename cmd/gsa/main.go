@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jingjie2002/GameServerProjectAgent/internal/agent"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/audit"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/deploy"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/generated"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/importer"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/onboard"
@@ -127,6 +129,16 @@ func main() {
 	store := audit.NewStore(auditPath(home))
 	session := agent.NewSession(mode, manifests, store, os.Stdout)
 
+	if len(args) > 0 && args[0] == "deploy" {
+		output, err := runDeployCommand(mode, home, manifests, args[1:])
+		if err != nil {
+			exitErr(err)
+		}
+		if output != "" {
+			fmt.Println(output)
+		}
+		return
+	}
 	if len(args) == 0 {
 		runInteractive(session)
 		return
@@ -166,6 +178,8 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 		return "usage: gsa register-generated <path> [--confirm]"
 	case "onboard":
 		return "usage: gsa onboard [repo-url] [--dest path] [--yes]"
+	case "deploy":
+		return "usage: gsa deploy plan|start|stop|status|logs <project_id> [--confirm] [--tail n]"
 	case "projects":
 		return session.Handle(ctx, "/项目")
 	case "capabilities":
@@ -258,6 +272,69 @@ func runImportCommand(ctx context.Context, home string, workspace string, config
 	return importer.FormatResult(result), nil
 }
 
+type deployCommandArgs struct {
+	Action    string
+	ProjectID string
+	Confirm   bool
+	Tail      int
+}
+
+func runDeployCommand(mode permissions.Mode, home string, manifests []projects.Manifest, args []string) (string, error) {
+	parsed, err := parseDeployArgs(args)
+	if err != nil {
+		return "", err
+	}
+	manager := deploy.Manager{Home: home, Mode: mode}
+	if parsed.Action == "status" && parsed.ProjectID == "" {
+		var lines []string
+		for _, project := range manifests {
+			lines = append(lines, deploy.FormatState(manager.Status(project)))
+		}
+		return strings.Join(lines, "\n\n"), nil
+	}
+	project, ok := findManifest(manifests, parsed.ProjectID)
+	if !ok {
+		return "", fmt.Errorf("找不到项目：%s", parsed.ProjectID)
+	}
+	switch parsed.Action {
+	case "plan":
+		_, spec, root, err := manager.Plan(project)
+		if err != nil {
+			return "", err
+		}
+		return deploy.FormatPlan(project, spec, root), nil
+	case "start":
+		state, err := manager.Start(project, parsed.Confirm)
+		if err != nil {
+			return "", err
+		}
+		return deploy.FormatState(state), nil
+	case "stop":
+		state, err := manager.Stop(project.ID, parsed.Confirm)
+		if err != nil {
+			return "", err
+		}
+		return deploy.FormatState(state), nil
+	case "status":
+		return deploy.FormatState(manager.Status(project)), nil
+	case "logs":
+		state := manager.Status(project)
+		if state.LogPath == "" {
+			return "", fmt.Errorf("项目没有日志路径：%s", project.ID)
+		}
+		output, err := deploy.ReadLogTail(state.LogPath, parsed.Tail)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(output) == "" {
+			return "日志为空：" + state.LogPath, nil
+		}
+		return output, nil
+	default:
+		return "", fmt.Errorf("usage: gsa deploy plan|start|stop|status|logs <project_id> [--confirm] [--tail n]")
+	}
+}
+
 func parseImportArgs(args []string) (string, string, error) {
 	var repoURL string
 	var dest string
@@ -346,6 +423,63 @@ func parseOnboardArgs(args []string) (string, string, bool, error) {
 	return repoURL, dest, autoApprove, nil
 }
 
+func parseDeployArgs(args []string) (deployCommandArgs, error) {
+	if len(args) == 0 {
+		return deployCommandArgs{}, fmt.Errorf("usage: gsa deploy plan|start|stop|status|logs <project_id> [--confirm] [--tail n]")
+	}
+	parsed := deployCommandArgs{Action: args[0], Tail: 80}
+	switch parsed.Action {
+	case "plan", "start", "stop", "status", "logs":
+	default:
+		return deployCommandArgs{}, fmt.Errorf("unknown deploy action: %s", parsed.Action)
+	}
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--confirm":
+			parsed.Confirm = true
+		case "--tail":
+			if i+1 >= len(args) {
+				return deployCommandArgs{}, fmt.Errorf("usage: gsa deploy logs <project_id> [--tail n]")
+			}
+			n, err := parsePositiveInt(args[i+1])
+			if err != nil {
+				return deployCommandArgs{}, err
+			}
+			parsed.Tail = n
+			i++
+		default:
+			if strings.HasPrefix(arg, "--tail=") {
+				n, err := parsePositiveInt(strings.TrimPrefix(arg, "--tail="))
+				if err != nil {
+					return deployCommandArgs{}, err
+				}
+				parsed.Tail = n
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				return deployCommandArgs{}, fmt.Errorf("unknown deploy option: %s", arg)
+			}
+			if parsed.ProjectID != "" {
+				return deployCommandArgs{}, fmt.Errorf("usage: gsa deploy plan|start|stop|status|logs <project_id> [--confirm] [--tail n]")
+			}
+			parsed.ProjectID = arg
+		}
+	}
+	if parsed.Action != "status" && parsed.ProjectID == "" {
+		return deployCommandArgs{}, fmt.Errorf("usage: gsa deploy %s <project_id>", parsed.Action)
+	}
+	return parsed, nil
+}
+
+func parsePositiveInt(value string) (int, error) {
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid positive integer: %s", value)
+	}
+	return n, nil
+}
+
 func projectManifestPaths(workspace string, cfg setup.Config) []string {
 	if raw := os.Getenv("GSA_PROJECT_MANIFESTS"); raw != "" {
 		parts := strings.Split(raw, string(os.PathListSeparator))
@@ -372,6 +506,16 @@ func hasArg(args []string, names ...string) bool {
 		}
 	}
 	return false
+}
+
+func findManifest(manifests []projects.Manifest, id string) (projects.Manifest, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(id))
+	for _, project := range manifests {
+		if strings.ToLower(project.ID) == normalized || strings.ToLower(project.Name) == normalized {
+			return project, true
+		}
+	}
+	return projects.Manifest{}, false
 }
 
 func auditPath(cwd string) string {
