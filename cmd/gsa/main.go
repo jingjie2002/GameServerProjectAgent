@@ -5,13 +5,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jingjie2002/GameServerProjectAgent/internal/agent"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/audit"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/dashboard"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/deploy"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/generated"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/importer"
@@ -19,6 +22,7 @@ import (
 	"github.com/jingjie2002/GameServerProjectAgent/internal/permissions"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/projects"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/scanner"
+	"github.com/jingjie2002/GameServerProjectAgent/internal/serverplan"
 	"github.com/jingjie2002/GameServerProjectAgent/internal/setup"
 )
 
@@ -122,6 +126,16 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "server" {
+		output, err := runServerCommand(home, workspace, configPath, args[1:])
+		if err != nil {
+			exitErr(err)
+		}
+		if output != "" {
+			fmt.Println(output)
+		}
+		return
+	}
 	manifests, err := projects.LoadManifests(projectManifestPaths(workspace, cfg))
 	if err != nil {
 		exitErr(err)
@@ -129,6 +143,12 @@ func main() {
 	store := audit.NewStore(auditPath(home))
 	session := agent.NewSession(mode, manifests, store, os.Stdout)
 
+	if len(args) > 0 && (args[0] == "dashboard" || args[0] == "serve") {
+		if err := runDashboardCommand(mode, home, workspace, manifests, args[1:]); err != nil {
+			exitErr(err)
+		}
+		return
+	}
 	if len(args) > 0 && args[0] == "deploy" {
 		output, err := runDeployCommand(mode, home, manifests, args[1:])
 		if err != nil {
@@ -180,6 +200,10 @@ func runOneShot(ctx context.Context, session *agent.Session, args []string) stri
 		return "usage: gsa onboard [repo-url] [--dest path] [--yes]"
 	case "deploy":
 		return "usage: gsa deploy plan|start|stop|status|logs <project_id> [--confirm] [--tail n]"
+	case "server":
+		return "usage: gsa server plan [--root path]"
+	case "dashboard", "serve":
+		return "usage: gsa dashboard [--host 127.0.0.1] [--port 18088]"
 	case "projects":
 		return session.Handle(ctx, "/项目")
 	case "capabilities":
@@ -277,6 +301,57 @@ type deployCommandArgs struct {
 	ProjectID string
 	Confirm   bool
 	Tail      int
+}
+
+type dashboardCommandArgs struct {
+	Host string
+	Port int
+}
+
+type serverCommandArgs struct {
+	Action string
+	Root   string
+}
+
+func runServerCommand(home string, workspace string, configPath string, args []string) (string, error) {
+	parsed, err := parseServerArgs(args)
+	if err != nil {
+		return "", err
+	}
+	switch parsed.Action {
+	case "plan":
+		plan := serverplan.Build(serverplan.Options{
+			Home:       home,
+			Workspace:  workspace,
+			ConfigPath: configPath,
+			Root:       parsed.Root,
+		})
+		return serverplan.Format(plan), nil
+	default:
+		return "", fmt.Errorf("usage: gsa server plan [--root path]")
+	}
+}
+
+func runDashboardCommand(mode permissions.Mode, home string, workspace string, manifests []projects.Manifest, args []string) error {
+	parsed, err := parseDashboardArgs(args)
+	if err != nil {
+		return err
+	}
+	addr := parsed.Host + ":" + strconv.Itoa(parsed.Port)
+	handler := dashboard.NewHandler(dashboard.Options{
+		Home:      home,
+		Workspace: workspace,
+		Mode:      mode,
+		Manifests: manifests,
+	})
+	fmt.Println("状态面板：http://" + addr)
+	fmt.Println("只读模式：页面不会启动、停止或修改任何服务。")
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return server.ListenAndServe()
 }
 
 func runDeployCommand(mode permissions.Mode, home string, manifests []projects.Manifest, args []string) (string, error) {
@@ -421,6 +496,77 @@ func parseOnboardArgs(args []string) (string, string, bool, error) {
 		}
 	}
 	return repoURL, dest, autoApprove, nil
+}
+
+func parseServerArgs(args []string) (serverCommandArgs, error) {
+	if len(args) == 0 {
+		return serverCommandArgs{}, fmt.Errorf("usage: gsa server plan [--root path]")
+	}
+	parsed := serverCommandArgs{Action: args[0]}
+	if parsed.Action != "plan" {
+		return serverCommandArgs{}, fmt.Errorf("unknown server action: %s", parsed.Action)
+	}
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--root":
+			if i+1 >= len(args) {
+				return serverCommandArgs{}, fmt.Errorf("usage: gsa server plan [--root path]")
+			}
+			parsed.Root = args[i+1]
+			i++
+		default:
+			if strings.HasPrefix(arg, "--root=") {
+				parsed.Root = strings.TrimPrefix(arg, "--root=")
+				continue
+			}
+			return serverCommandArgs{}, fmt.Errorf("unknown server option: %s", arg)
+		}
+	}
+	return parsed, nil
+}
+
+func parseDashboardArgs(args []string) (dashboardCommandArgs, error) {
+	parsed := dashboardCommandArgs{Host: "127.0.0.1", Port: 18088}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--host":
+			if i+1 >= len(args) {
+				return dashboardCommandArgs{}, fmt.Errorf("usage: gsa dashboard [--host 127.0.0.1] [--port 18088]")
+			}
+			parsed.Host = args[i+1]
+			i++
+		case "--port":
+			if i+1 >= len(args) {
+				return dashboardCommandArgs{}, fmt.Errorf("usage: gsa dashboard [--host 127.0.0.1] [--port 18088]")
+			}
+			n, err := parsePositiveInt(args[i+1])
+			if err != nil {
+				return dashboardCommandArgs{}, err
+			}
+			parsed.Port = n
+			i++
+		default:
+			if strings.HasPrefix(arg, "--host=") {
+				parsed.Host = strings.TrimSpace(strings.TrimPrefix(arg, "--host="))
+				continue
+			}
+			if strings.HasPrefix(arg, "--port=") {
+				n, err := parsePositiveInt(strings.TrimPrefix(arg, "--port="))
+				if err != nil {
+					return dashboardCommandArgs{}, err
+				}
+				parsed.Port = n
+				continue
+			}
+			return dashboardCommandArgs{}, fmt.Errorf("unknown dashboard option: %s", arg)
+		}
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return dashboardCommandArgs{}, fmt.Errorf("dashboard host is required")
+	}
+	return parsed, nil
 }
 
 func parseDeployArgs(args []string) (deployCommandArgs, error) {

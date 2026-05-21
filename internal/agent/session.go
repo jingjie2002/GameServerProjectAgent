@@ -105,6 +105,8 @@ func HelpText() string {
 		"gsa register-generated <path> [--confirm]（预览并确认注册 generated 配置）",
 		"gsa onboard [repo-url] [--dest path] [--yes]（导入、扫描、注册向导）",
 		"gsa deploy plan|start|stop|status|logs <project_id>（本地部署试运行）",
+		"gsa server plan [--root path]（查看轻量服务器目录和管理约定）",
+		"gsa dashboard [--host 127.0.0.1] [--port 18088]（只读 Web 状态面板）",
 		"/审计 [limit]",
 		"gsa setup（重新运行初始化向导）",
 		"gsa import <repo-url> [--dest path]（导入仓库）",
