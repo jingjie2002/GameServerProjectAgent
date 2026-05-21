@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,7 @@ type ServiceState struct {
 	StartedAt   string `json:"started_at,omitempty"`
 	StoppedAt   string `json:"stopped_at,omitempty"`
 	LogPath     string `json:"log_path"`
+	Ports       []int  `json:"ports,omitempty"`
 }
 
 type Manager struct {
@@ -209,6 +211,7 @@ func (m Manager) Start(project projects.Manifest, confirm bool) (ServiceState, e
 		Status:      "running",
 		StartedAt:   now,
 		LogPath:     logPath,
+		Ports:       portValues(spec.Ports),
 	}
 	if err := SaveState(m.Home, state); err != nil {
 		return state, err
@@ -231,6 +234,12 @@ func (m Manager) Stop(projectID string, confirm bool) (ServiceState, error) {
 		if err := killProcess(state.PID); err != nil && ProcessAlive(state.PID) {
 			return state, err
 		}
+		if !waitForExit(state.PID, 5*time.Second) {
+			return state, fmt.Errorf("process %d is still alive after stop", state.PID)
+		}
+	}
+	if !waitForPortsClosed(state.Ports, 60*time.Second) {
+		return state, fmt.Errorf("service ports are still reachable after stop: %s", joinInts(state.Ports))
 	}
 	state.Status = "stopped"
 	state.StoppedAt = m.now().Format(time.RFC3339)
@@ -252,6 +261,8 @@ func (m Manager) Status(project projects.Manifest) ServiceState {
 		}
 	}
 	if state.PID > 0 && ProcessAlive(state.PID) {
+		state.Status = "running"
+	} else if anyPortOpen(state.Ports) {
 		state.Status = "running"
 	} else if state.Status == "running" {
 		state.Status = "stopped"
@@ -382,10 +393,12 @@ func ProcessAlive(pid int) bool {
 		return false
 	}
 	if runtime.GOOS == "windows" {
+		if alive, ok := windowsProcessAlive(pid); ok {
+			return alive
+		}
 		out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/FO", "CSV", "/NH").CombinedOutput()
 		if err != nil {
-			_, findErr := os.FindProcess(pid)
-			return findErr == nil
+			return false
 		}
 		return strings.Contains(string(out), `"`+strconv.Itoa(pid)+`"`)
 	}
@@ -412,6 +425,9 @@ func shellCommand(command string) *exec.Cmd {
 
 func killProcess(pid int) error {
 	if runtime.GOOS == "windows" {
+		if err := killWindowsProcessTree(pid); err == nil {
+			return nil
+		}
 		if err := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run(); err == nil {
 			return nil
 		}
@@ -421,6 +437,71 @@ func killProcess(pid int) error {
 		return err
 	}
 	return process.Kill()
+}
+
+func killWindowsProcessTree(pid int) error {
+	script := fmt.Sprintf(`$ErrorActionPreference = "SilentlyContinue";
+function Stop-Tree([int]$Id) {
+  Get-CimInstance Win32_Process -Filter "ParentProcessId=$Id" | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }
+  Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue
+}
+Stop-Tree %d`, pid)
+	return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
+}
+
+func windowsProcessAlive(pid int) (bool, bool) {
+	command := fmt.Sprintf("$p = Get-Process -Id %d -ErrorAction SilentlyContinue; if ($null -eq $p) { exit 2 }", pid)
+	err := exec.Command("powershell", "-NoProfile", "-Command", command).Run()
+	if err == nil {
+		return true, true
+	}
+	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 2 {
+		return false, true
+	}
+	return false, false
+}
+
+func waitForExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if !ProcessAlive(pid) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func waitForPortsClosed(ports []int, timeout time.Duration) bool {
+	if len(ports) == 0 {
+		return true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if !anyPortOpen(ports) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func anyPortOpen(ports []int) bool {
+	for _, port := range ports {
+		if port <= 0 {
+			continue
+		}
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 250*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+	}
+	return false
 }
 
 func serviceDir(home string) string {
@@ -463,6 +544,24 @@ func formatPorts(ports []Port) string {
 		}
 	}
 	return strings.Join(values, ", ")
+}
+
+func portValues(ports []Port) []int {
+	values := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if port.Value > 0 {
+			values = append(values, port.Value)
+		}
+	}
+	return values
+}
+
+func joinInts(values []int) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.Itoa(value))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func emptyAsNone(value string) string {
